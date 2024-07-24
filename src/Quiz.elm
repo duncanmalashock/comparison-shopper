@@ -57,7 +57,7 @@ sortWithPreferences preferences options =
                                     LT
 
                         Nothing ->
-                            Basics.compare a b
+                            EQ
     in
     List.sortWith compareWithPreferences options
 
