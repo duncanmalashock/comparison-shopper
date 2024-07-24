@@ -11,7 +11,8 @@ export const onReady = ({ app, env }) => {
 export const getQuizFromLocalStorage = (app, id) => {
   let quiz = {
     values: "🪦 🥺 🤠 💪🏻 😰 😛 🕸️ 🦑 🐒 🐷 🐫 🥓 🧋 🥃 🎫".split(" ").map(x => [x]),
-    decisions: [{ left: "🪦", right: "🥺", selection: null}]
+    stack: { decisions: [{ left: "🪦", right: "🥺", selection: null}], low: 0, high: 1 },
+    lookup: {}
   }
   app.ports.sendQuiz.send(quiz)
 }

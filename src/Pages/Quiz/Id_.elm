@@ -2,12 +2,13 @@ module Pages.Quiz.Id_ exposing (Model, Msg, page)
 
 import Effect exposing (Effect)
 import Html
+import Json.Decode
 import Page exposing (Page)
 import Quiz exposing (Quiz)
 import Route exposing (Route)
 import Shared
 import View exposing (View)
-import Json.Decode
+
 
 page : Shared.Model -> Route { id : String } -> Page Model Msg
 page shared route =
@@ -42,14 +43,22 @@ init route () =
 
 type Msg
     = UserClicked String
-    | GotQuiz (Result Json.Decode.Error Quiz)  
+    | GotQuiz (Result Json.Decode.Error Quiz)
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     case msg of
         UserClicked choice ->
-            ( model
+            ( case model of
+                Success quiz ->
+                    Success (Quiz.update choice quiz)
+
+                Loading ->
+                    model
+
+                Failure ->
+                    model
             , Effect.none
             )
 
