@@ -1,14 +1,11 @@
 port module Quiz exposing (Quiz, encode, send, update, view)
 
-import Array exposing (Array)
-import Array.Extra
 import Dict exposing (Dict)
 import Html exposing (Html)
 import Html.Events
 import Json.Decode
 import Json.Encode
 import List.Extra
-import Set
 
 
 type Quiz
@@ -16,225 +13,107 @@ type Quiz
 
 
 type alias Internals =
-    { values : Array (List String)
-    , stack : Stack
-    , lookup : Lookup
+    { options : List String
+    , preferences : Preferences
     }
 
 
-type alias Lookup =
-    Dict ( String, String ) Favorite
+type alias Preferences =
+    Dict ( String, String ) Order
 
 
-type alias Favorite =
-    String
+unknowns : Quiz -> List ( String, String )
+unknowns (Quiz internals) =
+    List.Extra.uniquePairs internals.options
+        |> List.filter (isUnknown internals.preferences)
 
 
-type alias Stack =
-    { decisions : List Decision
-    , low : Int
-    , high : Int
-    }
+isUnknown : Preferences -> ( String, String ) -> Bool
+isUnknown preferences pair =
+    Dict.get pair preferences
+        |> (==) Nothing
 
 
-type alias Decision =
-    { left : String
-    , right : String
-    , selection : Maybe String
-    }
-
-
-update : String -> Quiz -> Quiz
-update choice (Quiz internals) =
+sortWithPreferences : Preferences -> List String -> List String
+sortWithPreferences preferences options =
     let
-        updatedDecisions : List Decision
-        updatedDecisions =
-            -- assume the next decision is the first one with selection = Nothing
-            List.foldl
-                (updateDecisions choice)
-                { decisions = [], completed = False }
-                internals.stack.decisions
-                |> .decisions
+        compareWithPreferences : String -> String -> Order
+        compareWithPreferences a b =
+            case Dict.get ( a, b ) preferences of
+                Just order ->
+                    order
 
-        stack : Stack
-        stack =
-            internals.stack
+                Nothing ->
+                    case Dict.get ( b, a ) preferences of
+                        Just order ->
+                            case order of
+                                LT ->
+                                    GT
 
-        allDecided : Bool
-        allDecided =
-            List.all (\decision -> decision.selection /= Nothing) updatedDecisions
+                                EQ ->
+                                    EQ
 
-        updatedQuiz =
-            if allDecided then
-                Quiz { internals | stack = { stack | decisions = updatedDecisions } }
-                    |> handleAllDecided
-                -- quiz with updated values
-                -- new decisions calculated
+                                GT ->
+                                    LT
 
-            else
-                Quiz { internals | stack = { stack | decisions = updatedDecisions } }
+                        Nothing ->
+                            Basics.compare a b
     in
-    updatedQuiz
+    List.sortWith compareWithPreferences options
 
 
-handleAllDecided : Quiz -> Quiz
-handleAllDecided (Quiz internals) =
-    let
-        newLookup : Lookup
-        newLookup =
-            internals.stack.decisions
-                |> fromDecisionsToLookup
-                |> Dict.union internals.lookup
-
-        combinedList : List String
-        combinedList =
-            internals.stack.decisions
-                |> decisionsToUniqueStrings
-                |> List.sortWith (uniqueStringSorter newLookup)
-
-        newValues : Array (List String)
-        newValues =
-            internals.values
-                |> Array.Extra.removeAt internals.stack.high
-                |> Array.Extra.removeAt internals.stack.low
-                |> Array.push combinedList
-
-        newStack : Stack
-        newStack =
-            case Array.toList newValues of
-                [] ->
-                    internals.stack
-
-                x :: [] ->
-                    internals.stack
-
-                left :: right :: _ ->
-                    { low = 0
-                    , high = 1
-                    , decisions =
-                        left
-                            |> List.concatMap (\l -> List.map (Tuple.pair l) right)
-                            |> List.map
-                                (\( l, r ) ->
-                                    Decision l r Nothing
-                                )
-
-                    -- |> List.append internals.stack.decisions
-                    }
-    in
-    Quiz { internals | values = newValues, stack = newStack, lookup = newLookup }
-
-
-fromDecisionsToLookup : List Decision -> Lookup
-fromDecisionsToLookup decisions =
-    decisions
-        |> List.map
-            (\d ->
-                let
-                    value =
-                        if Just d.left == d.selection then
-                            d.left
-
-                        else if Just d.right == d.selection then
-                            d.right
-
-                        else
-                            -- this is wrong
-                            d.left
-                in
-                if d.left < d.right then
-                    ( ( d.left, d.right ), value )
-
-                else
-                    ( ( d.right, d.left ), value )
-            )
-        |> Dict.fromList
-
-
-decisionsToUniqueStrings : List Decision -> List String
-decisionsToUniqueStrings decisions =
-    decisions
-        |> List.concatMap (\{ left, right } -> [ left, right ])
-        |> Set.fromList
-        |> Set.toList
-
-
-uniqueStringSorter : Lookup -> String -> String -> Order
-uniqueStringSorter lookup a b =
-    let
-        favorite =
-            if a < b then
-                Dict.get ( a, b ) lookup
-
-            else
-                Dict.get ( b, a ) lookup
-    in
-    if Just a == favorite then
-        LT
-
-    else if Just b == favorite then
-        GT
-
-    else
-        EQ
-
-
-updateDecisions : String -> Decision -> { decisions : List Decision, completed : Bool } -> { decisions : List Decision, completed : Bool }
-updateDecisions choice current state =
-    if state.completed then
-        { decisions = state.decisions ++ [ current ]
-        , completed = True
-        }
-
-    else if current.selection == Nothing then
-        { decisions = state.decisions ++ [ { current | selection = Just choice } ]
-        , completed = True
-        }
-
-    else
-        { decisions = state.decisions ++ [ current ]
-        , completed = False
+update : { left : String, right : String, order : Order } -> Quiz -> Quiz
+update preference (Quiz internals) =
+    Quiz
+        { internals
+            | preferences =
+                Dict.insert
+                    ( preference.left, preference.right )
+                    preference.order
+                    internals.preferences
         }
 
 
 view :
-    { userClicked : String -> msg
+    { userClicked : { left : String, right : String, order : Order } -> msg
     , quiz : Quiz
     }
     -> Html msg
 view props =
     let
-        (Quiz quiz) =
+        (Quiz internals) =
             props.quiz
     in
-    case getFirstUndecided quiz.stack.decisions of
-        Just { left, right } ->
+    case firstUnknown props.quiz of
+        Just ( left, right ) ->
             Html.div []
                 [ Html.button
-                    [ Html.Events.onClick (props.userClicked left)
+                    [ Html.Events.onClick
+                        (props.userClicked
+                            { left = left, right = right, order = LT }
+                        )
                     ]
                     [ Html.text left ]
                 , Html.button
-                    [ Html.Events.onClick (props.userClicked right)
+                    [ Html.Events.onClick
+                        (props.userClicked
+                            { left = left, right = right, order = GT }
+                        )
                     ]
                     [ Html.text right ]
                 ]
 
         Nothing ->
             Html.div []
-                (case Array.get 0 quiz.values of
-                    Nothing ->
-                        [ Html.text "what the hell" ]
-
-                    Just head ->
-                        List.map Html.text head
+                (sortWithPreferences internals.preferences internals.options
+                    |> List.map Html.text
                 )
 
 
-getFirstUndecided : List Decision -> Maybe Decision
-getFirstUndecided list =
-    list
-        |> List.filter (\decision -> decision.selection == Nothing)
+firstUnknown : Quiz -> Maybe ( String, String )
+firstUnknown quiz =
+    quiz
+        |> unknowns
         |> List.head
 
 
@@ -245,24 +124,15 @@ decoder =
 
 internalsDecoder : Json.Decode.Decoder Internals
 internalsDecoder =
-    Json.Decode.map3 Internals
-        (Json.Decode.field "values" valuesDecoder)
-        (Json.Decode.field "stack" stackDecoder)
-        (Json.Decode.field "lookup" lookupDecoder)
+    Json.Decode.map2 Internals
+        (Json.Decode.field "options" optionsDecoder)
+        (Json.Decode.field "preferences" preferencesDecoder)
 
 
-stackDecoder : Json.Decode.Decoder Stack
-stackDecoder =
-    Json.Decode.map3 Stack
-        (Json.Decode.field "decisions" (Json.Decode.list decisionDecoder))
-        (Json.Decode.field "low" Json.Decode.int)
-        (Json.Decode.field "high" Json.Decode.int)
-
-
-lookupDecoder : Json.Decode.Decoder Lookup
-lookupDecoder =
+preferencesDecoder : Json.Decode.Decoder Preferences
+preferencesDecoder =
     let
-        toKeys : Dict String Favorite -> Dict ( String, String ) Favorite
+        toKeys : Dict String Order -> Dict ( String, String ) Order
         toKeys d =
             Dict.toList d
                 |> List.map
@@ -281,81 +151,75 @@ lookupDecoder =
                     )
                 |> Dict.fromList
     in
-    Json.Decode.dict Json.Decode.string
+    Json.Decode.dict orderDecoder
         |> Json.Decode.map toKeys
 
 
-valuesDecoder : Json.Decode.Decoder (Array (List String))
-valuesDecoder =
-    Json.Decode.array (Json.Decode.list Json.Decode.string)
+orderDecoder : Json.Decode.Decoder Order
+orderDecoder =
+    Json.Decode.string
+        |> Json.Decode.andThen decodeOrder
 
 
-decisionDecoder : Json.Decode.Decoder Decision
-decisionDecoder =
-    Json.Decode.map3 Decision
-        (Json.Decode.field "left" Json.Decode.string)
-        (Json.Decode.field "right" Json.Decode.string)
-        (Json.Decode.field "selection" (Json.Decode.maybe Json.Decode.string))
+decodeOrder : String -> Json.Decode.Decoder Order
+decodeOrder str =
+    case str of
+        "LT" ->
+            Json.Decode.succeed LT
+
+        "EQ" ->
+            Json.Decode.succeed EQ
+
+        "GT" ->
+            Json.Decode.succeed GT
+
+        _ ->
+            Json.Decode.fail ("Invalid Order: " ++ str)
+
+
+optionsDecoder : Json.Decode.Decoder (List String)
+optionsDecoder =
+    Json.Decode.list Json.Decode.string
 
 
 encode : Quiz -> Json.Encode.Value
 encode (Quiz internals) =
     Json.Encode.object
-        [ ( "values"
-          , Json.Encode.array (Json.Encode.list Json.Encode.string) internals.values
+        [ ( "options"
+          , Json.Encode.list Json.Encode.string internals.options
           )
-        , ( "stack"
-          , encodeStack internals.stack
-          )
-        , ( "lookup"
-          , encodeLookup internals.lookup
+        , ( "preferences"
+          , encodePreferences internals.preferences
           )
         ]
 
 
-encodeStack : Stack -> Json.Encode.Value
-encodeStack stack =
-    Json.Encode.object
-        [ ( "low"
-          , Json.Encode.int stack.low
-          )
-        , ( "high"
-          , Json.Encode.int stack.high
-          )
-        , ( "decisions"
-          , Json.Encode.list encodeDecision stack.decisions
-          )
-        ]
+encodePreferences : Preferences -> Json.Encode.Value
+encodePreferences preferences =
+    Json.Encode.dict encodePreferencesKey Json.Encode.string (preferencesToStringOrder preferences)
 
 
-encodeLookup : Lookup -> Json.Encode.Value
-encodeLookup lookup =
-    Json.Encode.dict encodeLookupKey Json.Encode.string lookup
+preferencesToStringOrder : Preferences -> Dict ( String, String ) String
+preferencesToStringOrder preferences =
+    Dict.map orderToString preferences
 
 
-encodeLookupKey : ( String, String ) -> String
-encodeLookupKey ( left, right ) =
+orderToString : ( String, String ) -> Order -> String
+orderToString key order =
+    case order of
+        LT ->
+            "LT"
+
+        GT ->
+            "GT"
+
+        EQ ->
+            "EQ"
+
+
+encodePreferencesKey : ( String, String ) -> String
+encodePreferencesKey ( left, right ) =
     left ++ "\n" ++ right
-
-
-encodeDecision : Decision -> Json.Encode.Value
-encodeDecision decision =
-    Json.Encode.object
-        [ ( "left"
-          , Json.Encode.string decision.left
-          )
-        , ( "right"
-          , Json.Encode.string decision.right
-          )
-        , ( "selection"
-          , case decision.selection of
-                Just selection ->
-                    Json.Encode.string selection
-
-                Nothing ->
-                    Json.Encode.null
-          )
-        ]
 
 
 port sendQuiz : (Json.Encode.Value -> msg) -> Sub msg

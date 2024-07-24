@@ -26,7 +26,7 @@ page shared route =
 
 type Model
     = Loading
-    | Failure
+    | Failure Json.Decode.Error
     | Success Quiz
 
 
@@ -42,22 +42,22 @@ init route () =
 
 
 type Msg
-    = UserClicked String
+    = UserClicked { left : String, right : String, order : Order }
     | GotQuiz (Result Json.Decode.Error Quiz)
 
 
 update : Msg -> Model -> ( Model, Effect Msg )
 update msg model =
     case msg of
-        UserClicked choice ->
+        UserClicked preference ->
             ( case model of
                 Success quiz ->
-                    Success (Quiz.update choice quiz)
+                    Success (Quiz.update preference quiz)
 
                 Loading ->
                     model
 
-                Failure ->
+                Failure error ->
                     model
             , Effect.none
             )
@@ -67,8 +67,8 @@ update msg model =
             , Effect.none
             )
 
-        GotQuiz (Err message) ->
-            ( Failure
+        GotQuiz (Err error) ->
+            ( Failure error
             , Effect.none
             )
 
@@ -94,8 +94,8 @@ view model =
             Loading ->
                 Html.text "Loading..."
 
-            Failure ->
-                Html.text "Failed to load quiz"
+            Failure error ->
+                Html.text ("Failed to load quiz: " ++ Json.Decode.errorToString error)
 
             Success quiz ->
                 Quiz.view
