@@ -201,7 +201,7 @@ view props =
         viewPreference : ( ( String, String ), () ) -> Html msg
         viewPreference ( ( left, right ), _ ) =
             Html.div []
-                [ Html.text (left ++ " over " ++ right)
+                [ Html.text (left ++ " < " ++ right)
                 ]
     in
     case firstUnknown props.quiz of
