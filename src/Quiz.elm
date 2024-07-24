@@ -19,7 +19,7 @@ type alias Internals =
 
 
 type alias Preferences =
-    Dict ( String, String ) Order
+    Dict ( String, String ) ()
 
 
 unknowns : Quiz -> List ( String, String )
@@ -28,10 +28,56 @@ unknowns (Quiz internals) =
         |> List.filter (isUnknown internals.preferences)
 
 
+chosenAndInferred : Preferences -> Preferences
+chosenAndInferred preferences =
+    Dict.union
+        preferences
+        (inferredPreferences preferences)
+
+
 isUnknown : Preferences -> ( String, String ) -> Bool
-isUnknown preferences pair =
-    Dict.get pair preferences
-        |> (==) Nothing
+isUnknown preferences ( l, r ) =
+    let
+        allPrefs =
+            chosenAndInferred preferences
+
+        leftFirstLookup =
+            Dict.get ( l, r ) allPrefs
+
+        rightFirstLookup =
+            Dict.get ( r, l ) allPrefs
+    in
+    (leftFirstLookup == Nothing)
+        && (rightFirstLookup == Nothing)
+
+
+inferredPreferences : Preferences -> Preferences
+inferredPreferences preferences =
+    -- if 1 < 2, and 2 < 3, then 1 < 3
+    let
+        prefsList : List ( ( String, String ), () )
+        prefsList =
+            preferences
+                |> Dict.toList
+
+        inferredForRight : ( ( String, String ), () ) -> List ( ( String, String ), () )
+        inferredForRight ( ( la, ra ), _ ) =
+            prefsList
+                |> List.filterMap
+                    (\( ( lb, rb ), _ ) ->
+                        if lb == ra then
+                            Just ( ( la, rb ), () )
+
+                        else
+                            Nothing
+                    )
+    in
+    -- For each preference (la, ra)
+    -- look up all preferences (lb == ra, rb) and return (la, rb)
+    prefsList
+        |> List.concatMap inferredForRight
+        |> Dict.fromList
+        |> (\inf -> Dict.diff inf preferences)
 
 
 sortWithPreferences : Preferences -> List String -> List String
@@ -40,21 +86,13 @@ sortWithPreferences preferences options =
         compareWithPreferences : String -> String -> Order
         compareWithPreferences a b =
             case Dict.get ( a, b ) preferences of
-                Just order ->
-                    order
+                Just _ ->
+                    LT
 
                 Nothing ->
                     case Dict.get ( b, a ) preferences of
-                        Just order ->
-                            case order of
-                                LT ->
-                                    GT
-
-                                EQ ->
-                                    EQ
-
-                                GT ->
-                                    LT
+                        Just _ ->
+                            GT
 
                         Nothing ->
                             EQ
@@ -62,20 +100,33 @@ sortWithPreferences preferences options =
     List.sortWith compareWithPreferences options
 
 
-update : { left : String, right : String, order : Order } -> Quiz -> Quiz
+reverseOrder : Order -> Order
+reverseOrder order =
+    case order of
+        LT ->
+            GT
+
+        EQ ->
+            EQ
+
+        GT ->
+            LT
+
+
+update : { left : String, right : String } -> Quiz -> Quiz
 update preference (Quiz internals) =
     Quiz
         { internals
             | preferences =
                 Dict.insert
                     ( preference.left, preference.right )
-                    preference.order
+                    ()
                     internals.preferences
         }
 
 
 view :
-    { userClicked : { left : String, right : String, order : Order } -> msg
+    { userClicked : { left : String, right : String } -> msg
     , quiz : Quiz
     }
     -> Html msg
@@ -83,31 +134,93 @@ view props =
     let
         (Quiz internals) =
             props.quiz
-    in
-    case firstUnknown props.quiz of
-        Just ( left, right ) ->
+
+        viewChoiceButtons : String -> String -> Html msg
+        viewChoiceButtons left right =
             Html.div []
                 [ Html.button
                     [ Html.Events.onClick
                         (props.userClicked
-                            { left = left, right = right, order = LT }
+                            { left = left, right = right }
                         )
                     ]
                     [ Html.text left ]
                 , Html.button
                     [ Html.Events.onClick
                         (props.userClicked
-                            { left = left, right = right, order = GT }
+                            { left = right, right = left }
                         )
                     ]
                     [ Html.text right ]
                 ]
 
-        Nothing ->
+        allPreferences : Preferences
+        allPreferences =
+            chosenAndInferred internals.preferences
+
+        viewSortedList : Html msg
+        viewSortedList =
             Html.div []
-                (sortWithPreferences internals.preferences internals.options
+                (sortWithPreferences allPreferences internals.options
                     |> List.map Html.text
                 )
+
+        viewUnknowns : Html msg
+        viewUnknowns =
+            Html.div []
+                ([ Html.text "Unknowns:"
+                 ]
+                    ++ List.map viewUnknown
+                        (unknowns props.quiz)
+                )
+
+        viewUnknown : ( String, String ) -> Html msg
+        viewUnknown ( left, right ) =
+            Html.div []
+                [ Html.text (left ++ " vs " ++ right)
+                ]
+
+        viewPreferences : Html msg
+        viewPreferences =
+            Html.div []
+                ([ Html.text "Preferences:"
+                 ]
+                    ++ List.map viewPreference
+                        (Dict.toList internals.preferences)
+                )
+
+        viewInferredPreferences : Html msg
+        viewInferredPreferences =
+            Html.div []
+                ([ Html.text "Inferred:"
+                 ]
+                    ++ List.map viewPreference
+                        (Dict.toList (inferredPreferences internals.preferences))
+                )
+
+        viewPreference : ( ( String, String ), () ) -> Html msg
+        viewPreference ( ( left, right ), _ ) =
+            Html.div []
+                [ Html.text (left ++ " over " ++ right)
+                ]
+    in
+    case firstUnknown props.quiz of
+        Just ( left, right ) ->
+            Html.div []
+                [ viewChoiceButtons left right
+                , viewSortedList
+                , viewUnknowns
+                , viewPreferences
+                , viewInferredPreferences
+                ]
+
+        Nothing ->
+            Html.div []
+                [ viewSortedList
+                , viewUnknowns
+                , viewPreferences
+                , viewInferredPreferences
+                ]
 
 
 firstUnknown : Quiz -> Maybe ( String, String )
@@ -132,7 +245,7 @@ internalsDecoder =
 preferencesDecoder : Json.Decode.Decoder Preferences
 preferencesDecoder =
     let
-        toKeys : Dict String Order -> Dict ( String, String ) Order
+        toKeys : Dict String () -> Dict ( String, String ) ()
         toKeys d =
             Dict.toList d
                 |> List.map
@@ -146,19 +259,18 @@ preferencesDecoder =
 
                             a :: b :: _ ->
                                 ( a, b )
-                        , value
+                        , ()
                         )
                     )
                 |> Dict.fromList
     in
-    Json.Decode.dict orderDecoder
+    Json.Decode.dict (Json.Decode.succeed ())
         |> Json.Decode.map toKeys
 
 
-orderDecoder : Json.Decode.Decoder Order
+orderDecoder : Json.Decode.Decoder String
 orderDecoder =
     Json.Decode.string
-        |> Json.Decode.andThen decodeOrder
 
 
 decodeOrder : String -> Json.Decode.Decoder Order
@@ -204,17 +316,9 @@ preferencesToStringOrder preferences =
     Dict.map orderToString preferences
 
 
-orderToString : ( String, String ) -> Order -> String
+orderToString : ( String, String ) -> () -> String
 orderToString key order =
-    case order of
-        LT ->
-            "LT"
-
-        GT ->
-            "GT"
-
-        EQ ->
-            "EQ"
+    ""
 
 
 encodePreferencesKey : ( String, String ) -> String

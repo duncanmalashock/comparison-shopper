@@ -42,7 +42,7 @@ init route () =
 
 
 type Msg
-    = UserClicked { left : String, right : String, order : Order }
+    = UserClicked { left : String, right : String }
     | GotQuiz (Result Json.Decode.Error Quiz)
 
 

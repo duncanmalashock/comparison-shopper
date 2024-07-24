@@ -10,7 +10,7 @@ export const onReady = ({ app, env }) => {
 
 export const getQuizFromLocalStorage = (app, id) => {
   let quiz = {
-    options: "1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣".split(" "),
+    options: "3️⃣ 2️⃣ 4️⃣ 5️⃣ 1️⃣".split(" "),
     preferences: {}
   }
   app.ports.sendQuiz.send(quiz)
